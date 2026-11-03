@@ -1,0 +1,25 @@
+[package]
+name = "barracuda-network-watch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "Live TCP traffic and on-demand route diagnostics for Windows"
+
+[[bin]]
+name = "BarracudaNetworkWatch"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Threading",
+    "Win32_System_IO",
+] }
+
+[profile.release]
+lto = "thin"
+strip = true

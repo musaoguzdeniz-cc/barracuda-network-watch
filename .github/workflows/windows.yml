@@ -1,0 +1,29 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable --no-self-update
+      - run: cargo +stable fmt --check
+      - run: cargo +stable test --locked -- --nocapture
+        env:
+          NW_REQUIRE_LIVE_COUNTERS: '1'
+      - run: cargo +stable build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BarracudaNetworkWatch-Windows-x64
+          path: target/release/BarracudaNetworkWatch.exe
+          if-no-files-found: error
