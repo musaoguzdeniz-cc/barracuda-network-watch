@@ -1,8 +1,10 @@
-use crate::monitor::{self, Connection, Key, Monitor, Snapshot, Transfer};
+use crate::monitor::{self, Connection, Key, Monitor, Snapshot};
+use crate::native::{self, Icons};
 use crate::route::{self, Event, Finish, Hop};
+use crate::visuals::*;
 use eframe::egui::{
     self, Align, Align2, Button, Color32, FontId, Frame, Layout, Margin, Rect, RichText, Sense,
-    Stroke, Ui, Vec2, pos2, vec2,
+    Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use std::net::{IpAddr, SocketAddr};
 use std::os::windows::process::CommandExt;
@@ -11,19 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
+use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
-
-const BG: Color32 = Color32::from_rgb(19, 20, 23);
-const PANEL: Color32 = Color32::from_rgb(26, 27, 31);
-const FIELD: Color32 = Color32::from_rgb(21, 22, 25);
-const BORDER: Color32 = Color32::from_rgb(56, 58, 65);
-const TEXT: Color32 = Color32::from_rgb(242, 241, 244);
-const MUTED: Color32 = Color32::from_rgb(175, 177, 187);
-const CRIMSON: Color32 = Color32::from_rgb(190, 21, 62);
-const SELECTED: Color32 = Color32::from_rgb(103, 23, 44);
-const GREEN: Color32 = Color32::from_rgb(107, 233, 158);
-const AMBER: Color32 = Color32::from_rgb(242, 189, 91);
-const BLUE: Color32 = Color32::from_rgb(81, 177, 242);
 
 pub struct Watch {
     pending: Arc<Mutex<Option<Snapshot>>>,
@@ -34,6 +25,8 @@ pub struct Watch {
     selected: Option<Key>,
     route: Option<Trace>,
     intel: Option<Intel>,
+    icons: Icons,
+    trace_sequence: u64,
 }
 
 struct Trace {
@@ -42,6 +35,7 @@ struct Trace {
     receiver: mpsc::Receiver<Event>,
     cancel: Arc<AtomicBool>,
     hops: Vec<Hop>,
+    sequence: u64,
     finish: Option<Finish>,
 }
 
@@ -53,17 +47,8 @@ struct Intel {
 
 impl Watch {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut visuals = egui::Visuals::dark();
-        visuals.override_text_color = Some(TEXT);
-        visuals.panel_fill = BG;
-        visuals.window_fill = PANEL;
-        visuals.extreme_bg_color = FIELD;
-        visuals.faint_bg_color = FIELD;
-        visuals.selection.bg_fill = SELECTED;
-        visuals.widgets.inactive.bg_fill = FIELD;
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-        visuals.widgets.hovered.bg_fill = BORDER;
-        cc.egui_ctx.set_visuals(visuals);
+        native::dark_caption(cc);
+        setup(&cc.egui_ctx);
 
         let pending = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
@@ -90,6 +75,8 @@ impl Watch {
             selected: None,
             route: None,
             intel: None,
+            icons: Icons::new(cc.egui_ctx.clone()),
+            trace_sequence: 0,
         }
     }
 
@@ -113,7 +100,9 @@ impl Watch {
             let _ = sender.send(Event::Done(finish));
             ctx.request_repaint();
         });
+        self.trace_sequence = self.trace_sequence.wrapping_add(1);
         self.route = Some(Trace {
+            sequence: self.trace_sequence,
             local: key.local,
             target: key.remote,
             receiver,
@@ -138,16 +127,24 @@ impl Watch {
     }
 
     fn connections(&mut self, ui: &mut Ui) {
-        ui.heading(RichText::new("Canlı bağlantılar").size(26.0).strong());
-        ui.label(
-            RichText::new("Uygulamaların TCP bağlantıları ve anlık veri trafiği").color(MUTED),
+        heading(
+            ui,
+            "Canlı bağlantılar",
+            "Uygulamaların TCP bağlantıları ve anlık veri trafiği",
         );
         ui.add_space(10.0);
-        ui.add(
+        let search = ui.add_sized(
+            [ui.available_width(), 38.0],
             egui::TextEdit::singleline(&mut self.search)
                 .hint_text("Uygulama, IP, port veya PID ara")
-                .desired_width(f32::INFINITY),
+                .margin(Margin {
+                    left: 35,
+                    right: 12,
+                    top: 8,
+                    bottom: 8,
+                }),
         );
+        search_icon(ui.painter(), search.rect.left_center() + vec2(18.0, 0.0));
         ui.add_space(8.0);
 
         if !self.snapshot.table_errors.is_empty() {
@@ -155,7 +152,7 @@ impl Watch {
                 AMBER,
                 format!(
                     "Bağlantı tablosu okunamadı · {}",
-                    self.snapshot.table_errors.join(", ")
+                    self.snapshot.table_errors.join(", "),
                 ),
             );
         }
@@ -163,93 +160,70 @@ impl Watch {
             .snapshot
             .connections
             .iter()
-            .any(|c| c.traffic_error == Some(5))
+            .any(|c| c.traffic_error == Some(ERROR_ACCESS_DENIED))
         {
-            ui.colored_label(
-                AMBER,
-                "Trafik ölçümü için uygulamayı yönetici olarak çalıştır.",
+            ui.label(
+                RichText::new("Canlı trafik sayaçları için yönetici olarak çalıştır.")
+                    .color(AMBER)
+                    .size(13.0),
             );
         }
 
-        let mut rows = 0;
-        table_row(
-            ui,
-            &["Uygulama", "Uzak IP", "Port", "Durum", "İndirme", "Yükleme"],
-            None,
-        );
         let query = self.search.trim().to_lowercase();
-        let height = (ui.available_height() - 195.0).max(85.0);
-        egui::ScrollArea::vertical()
+        let rows: Vec<_> = self
+            .snapshot
+            .connections
+            .iter()
+            .filter(|c| {
+                query.is_empty()
+                    || c.process.name.to_lowercase().contains(&query)
+                    || address(c.key.remote).contains(&query)
+                    || c.key.remote.port().to_string().contains(&query)
+                    || c.key.pid.to_string().contains(&query)
+            })
+            .collect();
+        let width = ui.available_width() - GUTTER;
+        table_heading(ui, width);
+        let height = (ui.available_height() - TRAFFIC_HEIGHT - 12.0).max(ROW);
+        let rows_height = (height / ROW).floor() * ROW;
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("connections")
-            .max_height(height)
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for connection in &self.snapshot.connections {
-                    let key = connection.key;
-                    let ip = address(key.remote);
-                    let port = key.remote.port().to_string();
-                    if !query.is_empty()
-                        && !connection.process.to_lowercase().contains(&query)
-                        && !ip.contains(&query)
-                        && !port.contains(&query)
-                        && !key.pid.to_string().contains(&query)
-                    {
-                        continue;
-                    }
-                    rows += 1;
-                    let rate = connection.transfer.rate();
-                    let down = rate.map_or("—".into(), |value| quantity(value.down, true));
-                    let up = rate.map_or("—".into(), |value| quantity(value.up, true));
-                    let response = table_row(
-                        ui,
-                        &[
-                            &connection.process,
-                            &ip,
-                            &port,
-                            monitor::state_label(connection.state),
-                            &down,
-                            &up,
-                        ],
-                        Some(self.selected == Some(key)),
-                    );
-                    if response.clicked() {
-                        self.selected = Some(key);
-                    }
-                    let mut detail = format!(
-                        "{} · PID {}\n{} → {}",
-                        connection.process, key.pid, key.local, key.remote
-                    );
-                    if let Some(code) = connection.traffic_error {
-                        detail
-                            .push_str(&format!("\nTrafik verisi kullanılamıyor (Windows {code})."));
-                    } else if connection.transfer.has_counters() && rate.is_none() {
-                        detail.push_str("\nHız için bir sonraki örnek bekleniyor.");
-                    }
-                    response.on_hover_text(detail);
-                }
-                if rows == 0 {
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new(if self.waiting {
+            .auto_shrink([false, false])
+            .min_scrolled_height(0.0)
+            .max_height(rows_height);
+        if search.changed() {
+            scroll = scroll.vertical_scroll_offset(0.0);
+        }
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            scroll.show_rows(ui, ROW, rows.len().max(1), |ui, range| {
+                if rows.is_empty() {
+                    let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
+                    cell_text(
+                        ui.painter(),
+                        rect.shrink(8.0),
+                        if self.waiting {
                             "Bağlantılar okunuyor…"
                         } else {
-                            "Gösterilecek bağlantı yok."
-                        })
-                        .color(MUTED),
+                            "Aramaya uygun bağlantı bulunamadı."
+                        },
+                        FontId::proportional(14.0),
+                        MUTED,
+                        false,
                     );
+                    return;
+                }
+                for index in range {
+                    let c = rows[index];
+                    let icon = self.icons.get(c.process.image.as_deref());
+                    if connection_row(ui, width, c, self.selected == Some(c.key), icon).clicked() {
+                        self.selected = Some(c.key);
+                    }
                 }
             });
-        ui.add_space(10.0);
-        if let Some(connection) = self.selected_connection() {
-            transfer_panel(ui, connection);
-        } else {
-            panel().show(ui, |ui| {
-                ui.heading("Seçili bağlantının trafiği");
-                ui.label(
-                    RichText::new("Hız geçmişi ve toplam veri için bir bağlantı seç.").color(MUTED),
-                );
-            });
-        }
+        });
+        ui.add_space(4.0 + height - rows_height);
+        transfer_card(ui, self.selected_connection());
     }
 
     fn selected_connection(&self) -> Option<&Connection> {
@@ -260,121 +234,149 @@ impl Watch {
     }
 
     fn routes(&mut self, ui: &mut Ui) {
-        ui.heading(RichText::new("Hedefe ölçülen rota").size(26.0).strong());
-        ui.label(RichText::new("Ayrı ICMP ölçümü · Gidiş-dönüş süresi").color(MUTED));
+        heading(
+            ui,
+            "Hedefe ölçülen rota",
+            "Ayrı ICMP ölçümü · Gidiş-dönüş süresi",
+        );
         ui.add_space(12.0);
         let busy = self
             .route
             .as_ref()
             .is_some_and(|route| route.finish.is_none());
         let selected = self.selected_connection().map(|c| c.key);
-        let shown = self.route.as_ref().filter(|route| {
+        let belongs = |route: &&Trace| {
             busy || selected
                 .is_none_or(|key| route.local == key.local && route.target == key.remote)
-        });
-        let target = shown
+        };
+        let target = self
+            .route
+            .as_ref()
+            .filter(belongs)
             .map(|route| route.target)
             .or(selected.map(|key| key.remote));
-        ui.horizontal_wrapped(|ui| {
-            if let Some(target) = target {
-                ui.label(
-                    RichText::new(address(target))
-                        .monospace()
-                        .strong()
-                        .size(16.0),
-                );
-                let ip = target.ip().to_canonical();
-                if ui
-                    .add_enabled(is_public_candidate(ip), Button::new("IP’yi incele"))
-                    .on_hover_text("Barracuda IP Intelligence ile aç")
-                    .clicked()
-                {
-                    self.start_intel(ip, ui.ctx());
-                }
-            }
-            if busy {
-                if ui.button("Ölçümü durdur").clicked() {
-                    self.route
-                        .as_ref()
-                        .unwrap()
-                        .cancel
-                        .store(true, Ordering::Relaxed);
-                }
-            } else if let Some(key) = selected
-                && ui
-                    .add(
-                        Button::new(RichText::new("Rotayı ölç").color(Color32::WHITE))
-                            .fill(CRIMSON),
-                    )
-                    .clicked()
-            {
-                self.start_trace(key, ui.ctx());
-            }
-        });
-        ui.separator();
-        let Some(route) = self.route.as_ref().filter(|route| {
-            busy || selected
-                .is_none_or(|key| route.local == key.local && route.target == key.remote)
-        }) else {
-            ui.label(
-                RichText::new("Bir TCP bağlantısı seçip Rotayı ölç düğmesine bas.").color(MUTED),
-            );
-            return;
-        };
-
-        let (status, color) = match route.finish {
-            Some(Finish::Reached) => ("Hedefe ulaşıldı".into(), GREEN),
-            Some(Finish::Limit) => (
-                format!("{} adımda hedef yanıt vermedi", route::MAX_HOPS),
-                AMBER,
-            ),
-            Some(Finish::Cancelled) => ("Ölçüm durduruldu".into(), MUTED),
-            Some(Finish::Failed(code)) => (format!("Ölçüm tamamlanamadı · Windows {code}"), AMBER),
-            None => ("Rota ölçülüyor…".into(), MUTED),
-        };
-        let mut inspect = None;
-        egui::ScrollArea::vertical()
-            .id_salt("hops")
-            .max_height((ui.available_height() - 65.0).max(65.0))
+        Frame::new()
+            .fill(FIELD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .corner_radius(8)
+            .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
-                for hop in &route.hops {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [29.0, 28.0],
-                            egui::Label::new(
-                                RichText::new(hop.number.to_string())
-                                    .monospace()
-                                    .color(MUTED),
-                            ),
-                        );
-                        if let Some((ip, ms)) = hop.reply {
-                            let ip = ip.to_canonical();
-                            if is_public_candidate(ip) {
-                                if ui
-                                    .link(RichText::new(ip.to_string()).monospace())
-                                    .on_hover_text("IP’yi incele")
-                                    .clicked()
-                                {
-                                    inspect = Some(ip);
-                                }
-                            } else {
-                                ui.label(RichText::new(ip.to_string()).monospace());
+                ui.set_width(ui.available_width());
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), 34.0),
+                    Layout::right_to_left(Align::Center),
+                    |ui| {
+                        if busy {
+                            if ui.add(route_button("Ölçümü durdur", false)).clicked() {
+                                self.route
+                                    .as_ref()
+                                    .unwrap()
+                                    .cancel
+                                    .store(true, Ordering::Relaxed);
                             }
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(if ms == 0 {
-                                    "<1 ms".to_owned()
-                                } else {
-                                    format!("{ms} ms")
-                                });
-                            });
-                        } else {
-                            ui.colored_label(AMBER, "Yanıt yok");
+                        } else if ui
+                            .add_enabled(selected.is_some(), route_button("Rotayı ölç", true))
+                            .clicked()
+                            && let Some(key) = selected
+                        {
+                            self.start_trace(key, ui.ctx());
+                        }
+                        let ip = target.map(|target| target.ip().to_canonical());
+                        if ui
+                            .add_enabled(
+                                ip.is_some_and(is_public_candidate),
+                                route_button("IP’yi incele", false),
+                            )
+                            .on_hover_text("Barracuda IP Intelligence ile aç")
+                            .clicked()
+                            && let Some(ip) = ip
+                        {
+                            self.start_intel(ip, ui.ctx());
+                        }
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            if let Some(target) = target {
+                                let ip = address(target);
+                                ui.add(
+                                    egui::Label::new(RichText::new(&ip).font(bold(17.0)))
+                                        .truncate(),
+                                )
+                                .on_hover_text(ip);
+                            } else {
+                                ui.label(RichText::new("Hedef seçilmedi").color(MUTED));
+                            }
+                        });
+                    },
+                );
+            });
+        ui.add_space(12.0);
+
+        let route = self.route.as_ref().filter(belongs);
+        let height = (ui.available_height() - 69.0).max(62.0);
+        let mut inspect = None;
+        if let Some(route) = route {
+            let width = ui.available_width() - GUTTER;
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                egui::ScrollArea::vertical()
+                    .id_salt(("route hops", route.sequence))
+                    .auto_shrink([false, false])
+                    .min_scrolled_height(0.0)
+                    .max_height(height)
+                    .show_rows(ui, HOP, route.hops.len(), |ui, range| {
+                        for index in range {
+                            let reached = index + 1 == route.hops.len()
+                                && matches!(route.finish, Some(Finish::Reached));
+                            inspect = hop_row(
+                                ui,
+                                width,
+                                &route.hops[index],
+                                index + 1 == route.hops.len(),
+                                reached,
+                            )
+                            .or(inspect);
                         }
                     });
-                    ui.separator();
-                }
             });
-        ui.colored_label(color, RichText::new(status).strong());
+        } else {
+            let (rect, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+            let box_rect = Rect::from_center_size(rect.center(), vec2(46.0, 46.0));
+            let painter = ui.painter();
+            painter.rect(
+                box_rect.translate(vec2(0.0, -33.0)),
+                12.0,
+                FIELD,
+                Stroke::new(1.0, BORDER),
+                StrokeKind::Inside,
+            );
+            let nodes = [vec2(-12.0, -27.0), vec2(0.0, -40.0), vec2(13.0, -31.0)]
+                .map(|offset| rect.center() + offset);
+            painter.add(egui::Shape::line(nodes.to_vec(), Stroke::new(1.6, ROSE)));
+            for node in nodes {
+                painter.circle_filled(node, 3.0, ROSE);
+            }
+            painter.text(
+                rect.center() + vec2(0.0, 4.0),
+                Align2::CENTER_TOP,
+                "Rota ölçümü",
+                bold(17.0),
+                TEXT,
+            );
+            let hint = if selected.is_some() {
+                "Hop’ları görmek için Rotayı ölç düğmesine bas."
+            } else {
+                "Başlamak için bir TCP bağlantısı seç."
+            };
+            painter.text(
+                rect.center() + vec2(0.0, 27.0),
+                Align2::CENTER_TOP,
+                hint,
+                FontId::proportional(14.0),
+                MUTED,
+            );
+        }
+        ui.add_space(8.0);
+        route_status(ui, route);
         if let Some(ip) = inspect {
             self.start_intel(ip, ui.ctx());
         }
@@ -432,7 +434,8 @@ impl Drop for Watch {
 }
 
 impl eframe::App for Watch {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.icons.refresh(ctx);
         if let Some(snapshot) = self.pending.lock().unwrap().take() {
             self.snapshot = snapshot;
             self.waiting = false;
@@ -466,232 +469,354 @@ impl eframe::App for Watch {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         Frame::central_panel(ui.style())
             .fill(BG)
-            .inner_margin(12)
+            .inner_margin(0)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let (mark, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                    ui.painter().rect_filled(mark.shrink(2.0), 4.0, CRIMSON);
-                    ui.label(RichText::new("Barracuda Network Watch").size(20.0).strong());
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "{} TCP bağlantısı",
-                                self.snapshot.connections.len()
-                            ))
-                            .color(MUTED),
-                        );
-                        let (dot, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
-                        ui.painter().circle_filled(dot.center(), 3.5, GREEN);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                brand_bar(ui, self.snapshot.connections.len(), !self.waiting);
+                Frame::new().inner_margin(13).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(11.0, 4.0);
+                    let width = ui.available_width() - 11.0;
+                    let height = ui.available_height();
+                    ui.horizontal_top(|ui| {
+                        for (left, width) in [(true, width * 0.59), (false, width * 0.41)] {
+                            ui.allocate_ui_with_layout(
+                                vec2(width, height),
+                                Layout::top_down(Align::Min),
+                                |ui| {
+                                    ui.set_width(width);
+                                    panel().show(ui, |ui| {
+                                        let inner = vec2(width - 34.0, height - 34.0);
+                                        ui.set_min_size(inner);
+                                        ui.set_max_size(inner);
+                                        if left {
+                                            self.connections(ui);
+                                        } else {
+                                            self.routes(ui);
+                                        }
+                                    });
+                                },
+                            );
+                        }
                     });
-                });
-                ui.add_space(9.0);
-                let width = ui.available_width();
-                let height = ui.available_height();
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    for (index, width) in [(0, (width - 10.0) * 0.61), (1, (width - 10.0) * 0.39)] {
-                        let size = vec2(width, height);
-                        ui.allocate_ui_with_layout(size, Layout::top_down(Align::Min), |ui| {
-                            ui.set_width(width);
-                            panel().show(ui, |ui| {
-                                let inner = vec2(width - 30.0, (height - 30.0).max(100.0));
-                                ui.set_min_size(inner);
-                                ui.set_max_size(inner);
-                                if index == 0 {
-                                    self.connections(ui);
-                                } else {
-                                    self.routes(ui);
-                                }
-                            });
-                        });
-                    }
                 });
             });
         self.intel_window(ui);
     }
 }
 
-fn panel() -> Frame {
-    Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(9)
-        .inner_margin(Margin::same(14))
+fn route_button(text: &str, primary: bool) -> Button<'_> {
+    Button::new(RichText::new(text).font(bold(14.0)))
+        .min_size(vec2(if primary { 97.0 } else { 85.0 }, 34.0))
+        .corner_radius(6)
+        .fill(if primary { CRIMSON } else { BAR })
+        .stroke(if primary {
+            Stroke::NONE
+        } else {
+            Stroke::new(1.0, BORDER)
+        })
 }
 
-fn table_row(ui: &mut Ui, labels: &[&str; 6], selected: Option<bool>) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), 33.0),
-        if selected.is_some() {
-            Sense::click()
-        } else {
-            Sense::hover()
-        },
-    );
-    let fill = match selected {
-        None => FIELD,
-        Some(true) => SELECTED,
-        Some(false) if response.hovered() => BORDER,
-        Some(false) => PANEL,
+fn table_cells(rect: Rect) -> [Rect; 6] {
+    let bounds = [0.0, 0.243, 0.472, 0.554, 0.688, 0.842, 1.0];
+    std::array::from_fn(|i| {
+        Rect::from_min_max(
+            pos2(rect.left() + rect.width() * bounds[i] + 7.0, rect.top()),
+            pos2(
+                rect.left() + rect.width() * bounds[i + 1] - 6.0,
+                rect.bottom(),
+            ),
+        )
+    })
+}
+
+fn table_heading(ui: &mut Ui, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 37.0), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 5.0, BAR);
+    p.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BORDER));
+    for (index, (cell, label)) in table_cells(rect)
+        .into_iter()
+        .zip(["Uygulama", "Uzak IP", "Port", "Durum", "İndirme", "Yükleme"])
+        .enumerate()
+    {
+        let right = index >= 4;
+        if right {
+            let width = p.layout_no_wrap(label.into(), bold(14.0), TEXT).size().x;
+            arrow(
+                p,
+                cell.right_center() - vec2(width + 11.0, 0.0),
+                index == 5,
+                MUTED,
+            );
+        }
+        cell_text(p, cell, label, bold(14.0), TEXT, right);
+    }
+}
+
+fn connection_row(
+    ui: &mut Ui,
+    width: f32,
+    c: &Connection,
+    selected: bool,
+    icon: Option<egui::TextureId>,
+) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
+    let response = ui.interact(rect, ui.make_persistent_id(c.key), Sense::click());
+    let p = ui.painter();
+    if selected || response.hovered() {
+        p.rect_filled(rect, 4.0, if selected { SELECTED } else { BAR });
+        if selected {
+            p.rect_filled(
+                Rect::from_min_size(rect.left_top() + vec2(0.0, 3.0), vec2(3.0, ROW - 6.0)),
+                1.0,
+                ROSE,
+            );
+        }
+    }
+    p.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, LINE));
+
+    let state = monitor::state_label(c.state);
+    let color = match state {
+        "Bağlı" => GREEN,
+        "Kuruluyor" => AMBER,
+        _ => MUTED,
     };
-    let painter = ui.painter();
-    painter.rect_filled(rect, 3.0, fill);
-    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BORDER));
-    let shares = [0.215, 0.258, 0.077, 0.12, 0.165, 0.165];
-    let mut x = rect.left();
-    for (index, (label, share)) in labels.iter().zip(shares).enumerate() {
-        let w = rect.width() * share;
-        let cell = Rect::from_min_max(pos2(x + 5.0, rect.top()), pos2(x + w - 3.0, rect.bottom()));
-        let font = if selected.is_some() && matches!(index, 1 | 2 | 4 | 5) {
-            FontId::monospace(12.0)
+    let rate = c.transfer.rate();
+    let labels = [
+        c.process.name.clone(),
+        address(c.key.remote),
+        c.key.remote.port().to_string(),
+        state.to_owned(),
+        rate.map_or("—".into(), |r| quantity(r.down, true)),
+        rate.map_or("—".into(), |r| quantity(r.up, true)),
+    ];
+    for (i, mut cell) in table_cells(rect).into_iter().enumerate() {
+        if i == 0 {
+            let icon_rect =
+                Rect::from_center_size(cell.left_center() + vec2(11.0, 0.0), vec2(22.0, 22.0));
+            if let Some(icon) = icon {
+                p.image(
+                    icon,
+                    icon_rect,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            } else {
+                let fallback = icon_rect.shrink(2.0);
+                p.rect(
+                    fallback,
+                    4.0,
+                    BAR,
+                    Stroke::new(1.0, BORDER),
+                    StrokeKind::Inside,
+                );
+                p.hline(
+                    fallback.x_range().shrink(4.0),
+                    fallback.top() + 6.0,
+                    Stroke::new(1.0, MUTED),
+                );
+            }
+            cell.min.x += 29.0;
+        } else if i == 3 {
+            p.circle_filled(cell.left_center() + vec2(4.0, 0.0), 3.8, color);
+            cell.min.x += 13.0;
+        }
+        let font = if i == 0 && selected {
+            bold(15.0)
         } else {
-            FontId::proportional(13.0)
+            FontId::proportional(15.0)
         };
-        let color = if index == 3 && *label == "Bağlı" {
-            GREEN
+        let color = if i == 3 || (i >= 4 && rate.is_none()) {
+            MUTED
         } else {
             TEXT
         };
-        let painter = painter.with_clip_rect(cell);
-        let right = index >= 4;
-        painter.text(
-            if right {
-                cell.right_center()
-            } else {
-                cell.left_center()
-            },
-            if right {
-                Align2::RIGHT_CENTER
-            } else {
-                Align2::LEFT_CENTER
-            },
-            label,
-            font,
-            color,
-        );
-        x += w;
+        cell_text(p, cell, &labels[i], font, color, i >= 4);
     }
-    response
-}
-
-fn transfer_panel(ui: &mut Ui, connection: &Connection) {
-    panel().fill(FIELD).show(ui, |ui| {
-        ui.heading("Seçili bağlantının trafiği");
-        ui.label(
-            RichText::new(format!(
-                "{} · {}",
-                connection.process, connection.key.remote
-            ))
-            .monospace()
-            .color(MUTED),
-        );
-        ui.add_space(5.0);
-        let transfer = &connection.transfer;
-        let measured = transfer.has_counters();
-        ui.label(
-            RichText::new("İzleme başlangıcından beri ölçülen")
-                .color(MUTED)
-                .size(12.0),
-        );
-        ui.horizontal_wrapped(|ui| {
-            let down = if measured {
-                quantity(transfer.totals.down as f64, false)
-            } else {
-                "—".into()
-            };
-            let up = if measured {
-                quantity(transfer.totals.up as f64, false)
-            } else {
-                "—".into()
-            };
-            ui.colored_label(
-                CRIMSON.gamma_multiply(1.55),
-                RichText::new(format!("İndirilen {down}"))
-                    .strong()
-                    .size(18.0),
-            );
-            ui.colored_label(
-                BLUE,
-                RichText::new(format!("Yüklenen {up}")).strong().size(18.0),
-            );
-        })
-        .response
-        .on_hover_text("Toplam indirilen ve yüklenen veri");
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Son 60 saniye").color(MUTED).size(12.0));
-            ui.colored_label(CRIMSON.gamma_multiply(1.55), "İndirme");
-            ui.colored_label(BLUE, "Yükleme");
-        });
-        chart(ui, transfer);
-    });
-}
-
-fn chart(ui: &mut Ui, transfer: &Transfer) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 51.0), Sense::hover());
-    let Some(latest) = transfer.history.back() else {
-        return;
-    };
-    let max = transfer
-        .history
-        .iter()
-        .filter_map(|sample| sample.rate)
-        .map(|rate| rate.down.max(rate.up))
-        .fold(0.0_f64, f64::max)
-        .max(1000.0);
-    let graph = Rect::from_min_max(rect.min + vec2(74.0, 5.0), rect.max - vec2(2.0, 5.0));
-    let painter = ui.painter();
-    painter.text(
-        graph.left_top() - vec2(5.0, 0.0),
-        Align2::RIGHT_TOP,
-        quantity(max, true),
-        FontId::proportional(10.0),
-        MUTED,
+    let mut detail = format!(
+        "{} · PID {}\n{} → {}",
+        c.process.name, c.key.pid, c.key.local, c.key.remote
     );
-    painter.text(
-        graph.left_bottom() - vec2(5.0, 0.0),
-        Align2::RIGHT_BOTTOM,
-        "0",
-        FontId::proportional(10.0),
-        MUTED,
-    );
-    for y in [graph.top(), graph.center().y, graph.bottom()] {
-        painter.hline(graph.x_range(), y, Stroke::new(1.0, BORDER));
+    if let Some(code) = c.traffic_error {
+        detail.push_str(&format!("\nTrafik verisi kullanılamıyor (Windows {code})."));
+    } else if c.transfer.has_counters() && rate.is_none() {
+        detail.push_str("\nHız için bir sonraki örnek bekleniyor.");
     }
-    for (upload, color) in [(false, CRIMSON), (true, BLUE)] {
-        let mut last = None;
-        for sample in &transfer.history {
-            let point = sample.rate.map(|rate| {
-                let seconds = (latest.time - sample.time).as_secs_f32();
-                let x = graph.right() - (seconds / 60.0).min(1.0) * graph.width();
-                let y = if upload { rate.up } else { rate.down };
-                pos2(x, graph.bottom() - (y / max) as f32 * graph.height())
-            });
-            if let Some(point) = point {
-                if let Some(previous) = last {
-                    painter.line_segment([previous, point], Stroke::new(2.0, color));
-                }
-                painter.circle_filled(point, 1.6, color);
-            }
-            last = point;
-        }
-    }
+    response.on_hover_text(detail)
 }
 
-fn quantity(value: f64, rate: bool) -> String {
-    let (value, unit) = if value >= 1_000_000_000.0 {
-        (format!("{:.2}", value / 1_000_000_000.0), "GB")
-    } else if value >= 1_000_000.0 {
-        (format!("{:.2}", value / 1_000_000.0), "MB")
-    } else if value >= 1_000.0 || value == 0.0 && rate {
-        (format!("{:.1}", value / 1_000.0), "KB")
+fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Option<IpAddr> {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, HOP), Sense::hover());
+    let p = ui.painter();
+    let center = rect.left_center() + vec2(18.0, 0.0);
+    let missing = hop.reply.is_none();
+    let color = if reached {
+        GREEN
+    } else if missing {
+        AMBER
     } else {
-        (format!("{value:.0}"), "B")
+        MUTED
     };
-    format!(
-        "{} {unit}{}",
-        value.replace('.', ","),
-        if rate { "/sn" } else { "" }
-    )
+    if hop.number != 1 {
+        p.line_segment(
+            [pos2(center.x, rect.top()), center],
+            Stroke::new(2.0, BORDER),
+        );
+    }
+    if !last {
+        p.line_segment(
+            [center, pos2(center.x, rect.bottom())],
+            Stroke::new(2.0, BORDER),
+        );
+    }
+    p.circle(
+        center,
+        13.0,
+        if reached {
+            Color32::from_rgb(24, 63, 48)
+        } else {
+            BAR
+        },
+        Stroke::new(1.5, color),
+    );
+    p.text(
+        center,
+        Align2::CENTER_CENTER,
+        hop.number.to_string(),
+        bold(13.0),
+        if missing { AMBER } else { TEXT },
+    );
+    p.hline(
+        egui::Rangef::new(rect.left() + 42.0, rect.right()),
+        rect.bottom(),
+        Stroke::new(1.0, LINE),
+    );
+    let ip_rect = Rect::from_min_max(
+        pos2(rect.left() + 45.0, rect.top()),
+        pos2(rect.right() - 67.0, rect.bottom()),
+    );
+    let time_rect = Rect::from_min_max(pos2(rect.right() - 66.0, rect.top()), rect.right_bottom());
+    let mut inspect = None;
+    if let Some((ip, ms)) = hop.reply {
+        let ip = ip.to_canonical();
+        let mut color = if reached { GREEN } else { TEXT };
+        if is_public_candidate(ip) {
+            let ip_width = p.layout_no_wrap(ip.to_string(), bold(16.0), TEXT).size().x;
+            let area = Rect::from_center_size(
+                ip_rect.left_center() + vec2(ip_width.min(ip_rect.width()) / 2.0, 0.0),
+                vec2(ip_width.min(ip_rect.width()), 28.0),
+            );
+            let response = ui
+                .interact(
+                    area,
+                    ui.make_persistent_id(("inspect hop", hop.number)),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("IP’yi incele");
+            if response.hovered() {
+                color = BLUE;
+            }
+            if response.clicked() {
+                inspect = Some(ip);
+            }
+        }
+        cell_text(p, ip_rect, &ip.to_string(), bold(16.0), color, false);
+        cell_text(
+            p,
+            time_rect,
+            &rtt(ms),
+            FontId::proportional(15.0),
+            TEXT,
+            true,
+        );
+    } else {
+        cell_text(
+            p,
+            ip_rect,
+            "Yanıt yok",
+            FontId::proportional(15.0),
+            AMBER,
+            false,
+        );
+        cell_text(p, time_rect, "—", FontId::proportional(15.0), MUTED, true);
+    }
+    inspect
+}
+
+fn route_status(ui: &mut Ui, route: Option<&Trace>) {
+    let (title, detail, color) = match route {
+        Some(trace) => match trace.finish {
+            Some(Finish::Reached) => {
+                let result = trace.hops.last().and_then(|hop| hop.reply).map_or_else(
+                    || address(trace.target),
+                    |(ip, ms)| format!("{}  ·  {}", ip.to_canonical(), rtt(ms)),
+                );
+                ("Hedefe ulaşıldı".to_owned(), result, GREEN)
+            }
+            Some(Finish::Limit) => (
+                "Hedef yanıt vermedi".to_owned(),
+                format!("{} adım ölçüldü", route::MAX_HOPS),
+                AMBER,
+            ),
+            Some(Finish::Cancelled) => (
+                "Ölçüm durduruldu".to_owned(),
+                format!("{} adım ölçüldü", trace.hops.len()),
+                MUTED,
+            ),
+            Some(Finish::Failed(code)) => (
+                "Ölçüm tamamlanamadı".to_owned(),
+                format!("Windows hata kodu {code}"),
+                AMBER,
+            ),
+            None => (
+                "Rota ölçülüyor…".to_owned(),
+                format!("{} adım ölçüldü", trace.hops.len()),
+                ROSE,
+            ),
+        },
+        None => (
+            "Ölçüme hazır".to_owned(),
+            "Yanıt veren hop’lar bu panelde görünür.".to_owned(),
+            MUTED,
+        ),
+    };
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::hover());
+    let p = ui.painter();
+    p.rect(
+        rect,
+        7.0,
+        FIELD,
+        Stroke::new(1.0, BORDER),
+        StrokeKind::Inside,
+    );
+    p.circle_filled(rect.left_top() + vec2(16.0, 19.0), 4.0, color);
+    p.text(
+        rect.left_top() + vec2(29.0, 6.0),
+        Align2::LEFT_TOP,
+        title,
+        bold(16.0),
+        color,
+    );
+    cell_text(
+        p,
+        Rect::from_min_max(
+            rect.left_top() + vec2(29.0, 28.0),
+            rect.right_bottom() - vec2(7.0, 4.0),
+        ),
+        &detail,
+        FontId::proportional(14.0),
+        MUTED,
+        false,
+    );
+}
+
+fn rtt(ms: u32) -> String {
+    if ms == 0 {
+        "<1 ms".into()
+    } else {
+        format!("{ms} ms")
+    }
 }
 
 fn address(socket: SocketAddr) -> String {

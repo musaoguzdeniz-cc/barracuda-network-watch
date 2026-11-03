@@ -1,8 +1,11 @@
 use std::collections::{HashMap, VecDeque};
+use std::ffi::OsString;
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
-use std::path::Path;
+use std::os::windows::ffi::OsStringExt;
+use std::path::PathBuf;
 use std::ptr::null_mut;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::{
     Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER},
@@ -87,10 +90,15 @@ impl Transfer {
 
 pub struct Connection {
     pub key: Key,
-    pub process: String,
+    pub process: Arc<Process>,
     pub state: u32,
     pub transfer: Transfer,
     pub traffic_error: Option<u32>,
+}
+
+pub struct Process {
+    pub name: String,
+    pub image: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -134,7 +142,7 @@ impl Monitor {
                 }
                 let process = names
                     .entry(key.pid)
-                    .or_insert_with(|| process_name(key.pid))
+                    .or_insert_with(|| Arc::new(process_info(key.pid)))
                     .clone();
                 let mut transfer = previous.remove(&key).unwrap_or_default();
                 let counters = if state == MIB_TCP_STATE_ESTAB as u32 {
@@ -155,7 +163,7 @@ impl Monitor {
         }
         snapshot
             .connections
-            .sort_unstable_by(|a, b| a.process.cmp(&b.process).then(a.key.cmp(&b.key)));
+            .sort_unstable_by(|a, b| a.process.name.cmp(&b.process.name).then(a.key.cmp(&b.key)));
         snapshot
     }
 }
@@ -349,26 +357,36 @@ estats!(
     SetPerTcp6ConnectionEStats
 );
 
-fn process_name(pid: u32) -> String {
+fn process_info(pid: u32) -> Process {
+    let unknown = || Process {
+        name: format!("PID {pid}"),
+        image: None,
+    };
     let mut name = [0_u16; 1024];
     let mut len = name.len() as u32;
     // Open for query only and always close the handle.
     let success = unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle.is_null() {
-            return format!("PID {pid}");
+            return unknown();
         }
         let result = QueryFullProcessImageNameW(handle, 0, name.as_mut_ptr(), &mut len);
         CloseHandle(handle);
         result
     };
     if success == 0 {
-        return format!("PID {pid}");
+        return unknown();
     }
-    let full = String::from_utf16_lossy(&name[..len as usize]);
-    Path::new(&full)
+    let image = PathBuf::from(OsString::from_wide(&name[..len as usize]));
+    let name = image
         .file_name()
-        .map_or(full.clone(), |name| name.to_string_lossy().into_owned())
+        .unwrap_or(image.as_os_str())
+        .to_string_lossy()
+        .into_owned();
+    Process {
+        name,
+        image: Some(image),
+    }
 }
 
 pub fn state_label(state: u32) -> &'static str {

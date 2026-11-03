@@ -1,6 +1,6 @@
 [package]
 name = "barracuda-network-watch"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -12,12 +12,17 @@ path = "src/main.rs"
 
 [dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["clipboard", "default_fonts", "glow", "links"] }
+raw-window-handle = "0.6.2"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_System_Threading",
     "Win32_System_IO",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]
