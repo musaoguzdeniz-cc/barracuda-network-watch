@@ -1,0 +1,13 @@
+Barracuda Network Watch + IP Intelligence
+
+1. ZIP içeriğini tek bir klasöre çıkar.
+2. BarracudaNetworkWatch.exe dosyasını aç.
+3. Listeden genel IP adresine bağlı bir TCP bağlantısı seç ve “IP’yi incele” düğmesine bas.
+
+ipintel.exe aynı klasörde kalmalı. Temel RDAP, ağ ve ters DNS sorguları için
+internet bağlantısı gerekir. İsteğe bağlı sağlayıcılar için bu klasörde kendi
+.env dosyanı oluşturabilirsin. Desteklenen anahtar adları
+ABUSEIPDB_API_KEY, VIRUSTOTAL_API_KEY, SHODAN_API_KEY ve GREYNOISE_API_KEY.
+
+IP incelemesi yalnızca seçilen adres için pasif kaynaklara sorgu gönderir.
+Canlı hız sayaçları Windows’ta yönetici izni isteyebilir.

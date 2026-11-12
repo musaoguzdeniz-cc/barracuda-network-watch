@@ -1,25 +1,11 @@
 use crate::monitor::{Connection, Transfer};
-use crate::native::{FIN, FIN_COLORS};
+use crate::native::FIN;
+use crate::theme::{self, Colors};
 use eframe::egui::{
     self, Align2, Color32, FontFamily, FontId, Frame, Margin, Painter, Rect, RichText, Shape,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use std::path::PathBuf;
-
-pub const BG: Color32 = Color32::from_rgb(17, 18, 21);
-pub const BAR: Color32 = Color32::from_rgb(28, 29, 33);
-pub const PANEL: Color32 = Color32::from_rgb(25, 26, 30);
-pub const FIELD: Color32 = Color32::from_rgb(20, 21, 25);
-pub const BORDER: Color32 = Color32::from_rgb(58, 59, 66);
-pub const LINE: Color32 = Color32::from_rgb(47, 49, 55);
-pub const TEXT: Color32 = Color32::from_rgb(244, 244, 247);
-pub const MUTED: Color32 = Color32::from_rgb(176, 178, 190);
-pub const CRIMSON: Color32 = Color32::from_rgb(189, 21, 57);
-pub const ROSE: Color32 = Color32::from_rgb(250, 96, 126);
-pub const SELECTED: Color32 = Color32::from_rgb(112, 22, 43);
-pub const GREEN: Color32 = Color32::from_rgb(110, 239, 165);
-pub const AMBER: Color32 = Color32::from_rgb(247, 193, 96);
-pub const BLUE: Color32 = Color32::from_rgb(103, 191, 251);
 
 pub const ROW: f32 = 43.0;
 pub const HOP: f32 = 49.0;
@@ -55,17 +41,6 @@ pub fn setup(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 
     let mut style = (*ctx.global_style()).clone();
-    style.visuals = egui::Visuals::dark();
-    style.visuals.override_text_color = Some(TEXT);
-    style.visuals.panel_fill = BG;
-    style.visuals.window_fill = PANEL;
-    style.visuals.extreme_bg_color = FIELD;
-    style.visuals.faint_bg_color = FIELD;
-    style.visuals.selection.bg_fill = SELECTED;
-    style.visuals.hyperlink_color = BLUE;
-    style.visuals.widgets.inactive.bg_fill = BAR;
-    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(48, 49, 55);
     style.spacing.item_spacing = vec2(8.0, 4.0);
     style.spacing.scroll = egui::style::ScrollStyle::floating();
     style
@@ -81,26 +56,32 @@ pub fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("Barracuda Bold".into()))
 }
 
-pub fn panel() -> Frame {
+pub fn panel(colors: Colors) -> Frame {
     Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(colors.surface)
+        .stroke(Stroke::new(1.0, colors.border))
         .corner_radius(10)
         .inner_margin(Margin::same(16))
 }
 
 pub fn heading(ui: &mut Ui, title: &str, description: &str) {
+    let colors = theme::colors(ui.ctx());
     ui.label(RichText::new(title).font(bold(26.0)));
-    ui.label(RichText::new(description).color(MUTED));
+    ui.label(RichText::new(description).color(colors.muted));
 }
 
 pub fn brand_bar(ui: &mut Ui, connections: usize, ready: bool) {
+    let colors = theme::colors(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 55.0), egui::Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 0.0, BAR);
-    p.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BORDER));
+    p.rect_filled(rect, 0.0, colors.surface);
+    p.hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, colors.border),
+    );
     let mark = Rect::from_center_size(rect.left_center() + vec2(37.0, 0.0), vec2(42.0, 36.0));
-    for (triangle, color) in FIN.iter().zip(FIN_COLORS) {
+    for (triangle, color) in FIN.iter().zip([colors.accent, colors.secondary]) {
         p.add(Shape::convex_polygon(
             triangle
                 .iter()
@@ -120,26 +101,26 @@ pub fn brand_bar(ui: &mut Ui, connections: usize, ready: bool) {
         Align2::LEFT_CENTER,
         "Barracuda",
         bold(23.0),
-        TEXT,
+        colors.text,
     );
     p.text(
         rect.left_center() + vec2(181.0, 0.0),
         Align2::LEFT_CENTER,
         "Systems",
         FontId::proportional(19.0),
-        MUTED,
+        colors.muted,
     );
     let x = rect.left() + 266.0;
     p.line_segment(
         [pos2(x, rect.top() + 13.0), pos2(x, rect.bottom() - 13.0)],
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0, colors.border),
     );
     p.text(
         pos2(x + 20.0, rect.center().y),
         Align2::LEFT_CENTER,
         "Network Watch",
         FontId::proportional(18.0),
-        TEXT,
+        colors.text,
     );
 
     let status = if ready {
@@ -147,19 +128,23 @@ pub fn brand_bar(ui: &mut Ui, connections: usize, ready: bool) {
     } else {
         "Bağlantılar okunuyor".into()
     };
-    let galley = p.layout_no_wrap(status, FontId::proportional(14.0), MUTED);
+    let galley = p.layout_no_wrap(status, FontId::proportional(14.0), colors.muted);
     let status_pos = rect.right_center() - vec2(21.0 + galley.size().x, galley.size().y / 2.0);
     p.circle_filled(
         pos2(status_pos.x - 12.0, rect.center().y),
         4.0,
-        if ready { GREEN } else { AMBER },
+        if ready {
+            colors.success
+        } else {
+            colors.warning
+        },
     );
-    p.galley(status_pos, galley, MUTED);
+    p.galley(status_pos, galley, colors.muted);
 }
 
-pub fn search_icon(painter: &Painter, center: egui::Pos2) {
+pub fn search_icon(painter: &Painter, center: egui::Pos2, color: Color32) {
     let origin = center - vec2(1.0, 1.0);
-    let stroke = Stroke::new(1.6, MUTED);
+    let stroke = Stroke::new(1.6, color);
     painter.circle_stroke(origin, 5.0, stroke);
     painter.line_segment([origin + vec2(3.6, 3.6), origin + vec2(7.0, 7.0)], stroke);
 }
@@ -199,6 +184,7 @@ pub fn cell_text(
 }
 
 pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
+    let colors = theme::colors(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(
         vec2(ui.available_width(), TRAFFIC_HEIGHT),
         egui::Sense::hover(),
@@ -207,8 +193,8 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
     p.rect(
         rect,
         9.0,
-        FIELD,
-        Stroke::new(1.0, BORDER),
+        colors.field,
+        Stroke::new(1.0, colors.border),
         StrokeKind::Inside,
     );
     p.rect_filled(
@@ -217,7 +203,7 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
             pos2(rect.left() + 4.0, rect.bottom() - 10.0),
         ),
         1.5,
-        CRIMSON,
+        colors.accent,
     );
     let inset = rect.shrink2(vec2(16.0, 11.0));
     p.text(
@@ -225,7 +211,7 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
         Align2::LEFT_TOP,
         "Seçili bağlantının trafiği",
         bold(20.0),
-        TEXT,
+        colors.text,
     );
     let detail = connection.map_or(
         "Hız geçmişi ve toplam veri için bir bağlantı seç.".into(),
@@ -239,18 +225,18 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
         ),
         &detail,
         FontId::proportional(14.0),
-        MUTED,
+        colors.muted,
         false,
     );
     let divider = rect.top() + 64.0;
-    p.hline(inset.x_range(), divider, Stroke::new(1.0, LINE));
+    p.hline(inset.x_range(), divider, Stroke::new(1.0, colors.border));
     let plot_left = inset.left() + (inset.width() * 0.49).max(231.0);
     p.line_segment(
         [
             pos2(plot_left - 10.0, divider + 10.0),
             pos2(plot_left - 10.0, inset.bottom()),
         ],
-        Stroke::new(1.0, LINE),
+        Stroke::new(1.0, colors.border),
     );
     let transfer = connection.map(|c| &c.transfer);
     p.text(
@@ -258,12 +244,15 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
         Align2::LEFT_TOP,
         "İzleme başlangıcından beri",
         FontId::proportional(13.0),
-        MUTED,
+        colors.muted,
     );
     let metric_width = (plot_left - 12.0 - inset.left()) / 2.0;
-    for (i, (label, color)) in [("Toplam indirilen", ROSE), ("Toplam yüklenen", BLUE)]
-        .into_iter()
-        .enumerate()
+    for (i, (label, color)) in [
+        ("Toplam indirilen", colors.accent_text),
+        ("Toplam yüklenen", colors.secondary_text),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let x = inset.left() + i as f32 * metric_width;
         p.text(
@@ -271,7 +260,7 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
             Align2::LEFT_TOP,
             label,
             FontId::proportional(13.0),
-            MUTED,
+            colors.muted,
         );
         let value = transfer
             .filter(|t| t.has_counters())
@@ -291,18 +280,21 @@ pub fn transfer_card(ui: &mut Ui, connection: Option<&Connection>) {
         );
     }
     let plot = Rect::from_min_max(pos2(plot_left, divider + 8.0), inset.right_bottom());
-    chart(p, plot, transfer);
+    chart(p, plot, transfer, colors);
 }
 
-fn chart(p: &Painter, rect: Rect, transfer: Option<&Transfer>) {
+fn chart(p: &Painter, rect: Rect, transfer: Option<&Transfer>, colors: Colors) {
     p.text(
         rect.left_top(),
         Align2::LEFT_TOP,
         "Son 60 saniye",
         bold(14.0),
-        TEXT,
+        colors.text,
     );
-    for (index, color) in [BLUE, ROSE].into_iter().enumerate() {
+    for (index, color) in [colors.secondary_text, colors.accent_text]
+        .into_iter()
+        .enumerate()
+    {
         arrow(
             p,
             rect.right_top() - vec2(7.0 + index as f32 * 19.0, -9.0),
@@ -312,13 +304,19 @@ fn chart(p: &Painter, rect: Rect, transfer: Option<&Transfer>) {
     }
     let Some(transfer) = transfer.filter(|t| t.history.iter().any(|s| s.rate.is_some())) else {
         let area = Rect::from_min_max(rect.left_top() + vec2(0.0, 24.0), rect.right_bottom());
-        p.rect(area, 5.0, PANEL, Stroke::new(1.0, LINE), StrokeKind::Inside);
+        p.rect(
+            area,
+            5.0,
+            colors.surface,
+            Stroke::new(1.0, colors.border),
+            StrokeKind::Inside,
+        );
         cell_text(
             p,
             area.shrink(8.0),
             "Hız verisi bekleniyor",
             FontId::proportional(13.0),
-            MUTED,
+            colors.muted,
             false,
         );
         return;
@@ -336,19 +334,19 @@ fn chart(p: &Painter, rect: Rect, transfer: Option<&Transfer>) {
         Align2::RIGHT_TOP,
         quantity(max, true),
         FontId::proportional(11.0),
-        MUTED,
+        colors.muted,
     );
     p.text(
         graph.left_bottom() - vec2(5.0, 0.0),
         Align2::RIGHT_BOTTOM,
         "0",
         FontId::proportional(11.0),
-        MUTED,
+        colors.muted,
     );
     for y in [graph.top(), graph.center().y, graph.bottom()] {
-        p.hline(graph.x_range(), y, Stroke::new(1.0, LINE));
+        p.hline(graph.x_range(), y, Stroke::new(1.0, colors.border));
     }
-    for (upload, color) in [(false, ROSE), (true, BLUE)] {
+    for (upload, color) in [(false, colors.accent_text), (true, colors.secondary_text)] {
         let mut last = None;
         for sample in &transfer.history {
             let point = sample.rate.map(|rate| {

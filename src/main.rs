@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod theme;
+
+const THEME_APP: &str = "Network Watch";
+
 mod monitor;
 mod native;
 mod route;

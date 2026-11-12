@@ -4,6 +4,8 @@ Windows 10/11 x64 için Rust ile yazılmış masaüstü ağ izleyicisi.
 
 [Windows EXE'yi indir](https://github.com/musaoguzdeniz-cc/barracuda-network-watch/releases/latest/download/BarracudaNetworkWatch.exe)
 
+[Network Watch + IP Analizi ZIP'ini indir](https://github.com/musaoguzdeniz-cc/barracuda-network-watch/releases/latest/download/BarracudaNetworkWatch-IP-Analysis-win-x64.zip)
+
 ## Kullanım
 
 1. Uygulamayı aç ve listeden bir TCP bağlantısı seç. Uygulama adı, uzak IP, port ve duruma ek olarak her satırda son örnekleme aralığındaki indirme ve yükleme hızı gösterilir.
@@ -14,6 +16,10 @@ Windows 10/11 x64 için Rust ile yazılmış masaüstü ağ izleyicisi.
 Windows TCP EStats sayaçları TCP veri yükünü ölçer ve yeniden gönderilen veriyi de sayar. Hız, ardışık sayaç değerlerinden yaklaşık saniyede bir hesaplanır. Sayaçları okunamayan satırlarda **—** gösterilir. Bir ölçüm boşluğunda eksik örnekler toplam ve grafiğe dahil edilmez. UDP ve QUIC bu sürümün kapsamı dışındadır. Bağlantı listesi, sayaçlar ve grafik bellekte işlenir.
 
 Rota paneli ICMP denemelerinde görülen yolu gösterir. Uygulamanın TCP trafiği başka bir yol izleyebilir. Bir hop yanıt vermese bile sonraki hop’lar ve hedef yanıt verebilir. Rota ölçümü yalnızca düğmeye basınca başlar.
+
+## IP analizi paketi
+
+Hazır ZIP’i bir klasöre çıkar ve `BarracudaNetworkWatch.exe` dosyasını aç. Paketteki `ipintel.exe`, **IP’yi incele** düğmesi tarafından aynı klasörden çalıştırılır. İki projeyi yan yana klonlayıp Release olarak derledikten sonra `./scripts/package-ip-analysis.ps1` ile ZIP’i oluşturabilirsin. Komut yalnızca iki EXE, kullanım metni ve lisansları paketler.
 
 ## Derleme
 

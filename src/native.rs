@@ -1,3 +1,4 @@
+use crate::theme::Colors;
 use eframe::egui::{self, Color32, ColorImage, TextureHandle, TextureOptions};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::collections::{HashMap, HashSet};
@@ -22,8 +23,8 @@ pub const FIN_COLORS: [Color32; 2] = [
     Color32::from_rgb(181, 21, 57),
 ];
 
-pub fn dark_caption(cc: &eframe::CreationContext<'_>) {
-    let Ok(handle) = cc.window_handle() else {
+pub fn caption(window: &impl HasWindowHandle, colors: Colors) {
+    let Ok(handle) = window.window_handle() else {
         return;
     };
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {
@@ -31,10 +32,10 @@ pub fn dark_caption(cc: &eframe::CreationContext<'_>) {
     };
     let hwnd = handle.hwnd.get() as _;
     for (attribute, value) in [
-        (DWMWA_USE_IMMERSIVE_DARK_MODE, 1),
-        (DWMWA_CAPTION_COLOR, color_ref(28, 29, 33)),
-        (DWMWA_TEXT_COLOR, color_ref(244, 244, 247)),
-        (DWMWA_BORDER_COLOR, color_ref(58, 59, 65)),
+        (DWMWA_USE_IMMERSIVE_DARK_MODE, u32::from(!colors.light)),
+        (DWMWA_CAPTION_COLOR, color_ref(colors.surface)),
+        (DWMWA_TEXT_COLOR, color_ref(colors.text)),
+        (DWMWA_BORDER_COLOR, color_ref(colors.border)),
     ] {
         // DWM rejects unsupported attributes on older Windows builds.
         unsafe {
@@ -48,8 +49,8 @@ pub fn dark_caption(cc: &eframe::CreationContext<'_>) {
     }
 }
 
-const fn color_ref(r: u8, g: u8, b: u8) -> u32 {
-    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
+fn color_ref(color: Color32) -> u32 {
+    u32::from_le_bytes([color.r(), color.g(), color.b(), 0])
 }
 
 pub fn app_icon() -> egui::IconData {

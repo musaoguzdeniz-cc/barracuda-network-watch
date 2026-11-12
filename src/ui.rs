@@ -2,6 +2,7 @@ use crate::monitor::{self, Connection, Key, Monitor, Snapshot};
 use crate::native::{self, Icons};
 use crate::route::{self, Event, Finish, Hop};
 use crate::visuals::*;
+use crate::{THEME_APP, theme};
 use eframe::egui::{
     self, Align, Align2, Button, Color32, FontId, Frame, Layout, Margin, Rect, RichText, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
@@ -47,8 +48,9 @@ struct Intel {
 
 impl Watch {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        native::dark_caption(cc);
         setup(&cc.egui_ctx);
+        theme::load(&cc.egui_ctx, THEME_APP);
+        native::caption(cc, theme::colors(&cc.egui_ctx));
 
         let pending = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
@@ -127,6 +129,7 @@ impl Watch {
     }
 
     fn connections(&mut self, ui: &mut Ui) {
+        let colors = theme::colors(ui.ctx());
         heading(
             ui,
             "Canlı bağlantılar",
@@ -144,12 +147,16 @@ impl Watch {
                     bottom: 8,
                 }),
         );
-        search_icon(ui.painter(), search.rect.left_center() + vec2(18.0, 0.0));
+        search_icon(
+            ui.painter(),
+            search.rect.left_center() + vec2(18.0, 0.0),
+            colors.muted,
+        );
         ui.add_space(8.0);
 
         if !self.snapshot.table_errors.is_empty() {
             ui.colored_label(
-                AMBER,
+                colors.warning,
                 format!(
                     "Bağlantı tablosu okunamadı · {}",
                     self.snapshot.table_errors.join(", "),
@@ -164,7 +171,7 @@ impl Watch {
         {
             ui.label(
                 RichText::new("Canlı trafik sayaçları için yönetici olarak çalıştır.")
-                    .color(AMBER)
+                    .color(colors.warning)
                     .size(13.0),
             );
         }
@@ -208,7 +215,7 @@ impl Watch {
                             "Aramaya uygun bağlantı bulunamadı."
                         },
                         FontId::proportional(14.0),
-                        MUTED,
+                        colors.muted,
                         false,
                     );
                     return;
@@ -234,6 +241,7 @@ impl Watch {
     }
 
     fn routes(&mut self, ui: &mut Ui) {
+        let colors = theme::colors(ui.ctx());
         heading(
             ui,
             "Hedefe ölçülen rota",
@@ -256,8 +264,8 @@ impl Watch {
             .map(|route| route.target)
             .or(selected.map(|key| key.remote));
         Frame::new()
-            .fill(FIELD)
-            .stroke(Stroke::new(1.0, BORDER))
+            .fill(colors.field)
+            .stroke(Stroke::new(1.0, colors.border))
             .corner_radius(8)
             .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
@@ -267,7 +275,10 @@ impl Watch {
                     Layout::right_to_left(Align::Center),
                     |ui| {
                         if busy {
-                            if ui.add(route_button("Ölçümü durdur", false)).clicked() {
+                            if ui
+                                .add(route_button("Ölçümü durdur", false, colors))
+                                .clicked()
+                            {
                                 self.route
                                     .as_ref()
                                     .unwrap()
@@ -275,7 +286,10 @@ impl Watch {
                                     .store(true, Ordering::Relaxed);
                             }
                         } else if ui
-                            .add_enabled(selected.is_some(), route_button("Rotayı ölç", true))
+                            .add_enabled(
+                                selected.is_some(),
+                                route_button("Rotayı ölç", true, colors),
+                            )
                             .clicked()
                             && let Some(key) = selected
                         {
@@ -285,7 +299,7 @@ impl Watch {
                         if ui
                             .add_enabled(
                                 ip.is_some_and(is_public_candidate),
-                                route_button("IP’yi incele", false),
+                                route_button("IP’yi incele", false, colors),
                             )
                             .on_hover_text("Barracuda IP Intelligence ile aç")
                             .clicked()
@@ -302,7 +316,7 @@ impl Watch {
                                 )
                                 .on_hover_text(ip);
                             } else {
-                                ui.label(RichText::new("Hedef seçilmedi").color(MUTED));
+                                ui.label(RichText::new("Hedef seçilmedi").color(colors.muted));
                             }
                         });
                     },
@@ -345,22 +359,25 @@ impl Watch {
             painter.rect(
                 box_rect.translate(vec2(0.0, -33.0)),
                 12.0,
-                FIELD,
-                Stroke::new(1.0, BORDER),
+                colors.field,
+                Stroke::new(1.0, colors.border),
                 StrokeKind::Inside,
             );
             let nodes = [vec2(-12.0, -27.0), vec2(0.0, -40.0), vec2(13.0, -31.0)]
                 .map(|offset| rect.center() + offset);
-            painter.add(egui::Shape::line(nodes.to_vec(), Stroke::new(1.6, ROSE)));
+            painter.add(egui::Shape::line(
+                nodes.to_vec(),
+                Stroke::new(1.6, colors.accent_text),
+            ));
             for node in nodes {
-                painter.circle_filled(node, 3.0, ROSE);
+                painter.circle_filled(node, 3.0, colors.accent_text);
             }
             painter.text(
                 rect.center() + vec2(0.0, 4.0),
                 Align2::CENTER_TOP,
                 "Rota ölçümü",
                 bold(17.0),
-                TEXT,
+                colors.text,
             );
             let hint = if selected.is_some() {
                 "Hop’ları görmek için Rotayı ölç düğmesine bas."
@@ -372,7 +389,7 @@ impl Watch {
                 Align2::CENTER_TOP,
                 hint,
                 FontId::proportional(14.0),
-                MUTED,
+                colors.muted,
             );
         }
         ui.add_space(8.0);
@@ -383,6 +400,7 @@ impl Watch {
     }
 
     fn intel_window(&mut self, ui: &mut Ui) {
+        let colors = theme::colors(ui.ctx());
         let Some(intel) = &mut self.intel else { return };
         if intel.result.is_none() {
             match intel.receiver.try_recv() {
@@ -407,7 +425,7 @@ impl Watch {
                     });
                 }
                 Some(Err(message)) => {
-                    ui.colored_label(AMBER, message.as_str());
+                    ui.colored_label(colors.warning, message.as_str());
                     ui.hyperlink_to(
                         "Barracuda IP Intelligence",
                         "https://github.com/musaoguzdeniz-cc/barracuda-ip-intelligence",
@@ -466,13 +484,23 @@ impl eframe::App for Watch {
         }
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        let colors = theme::colors(ui.ctx());
         Frame::central_panel(ui.style())
-            .fill(BG)
+            .fill(colors.background)
             .inner_margin(0)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 brand_bar(ui, self.snapshot.connections.len(), !self.waiting);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .menu_button("Görünüm", |ui| theme::picker(ui, THEME_APP, "Tema"))
+                        .inner
+                        == Some(true)
+                    {
+                        native::caption(frame, theme::colors(ui.ctx()));
+                    }
+                });
                 Frame::new().inner_margin(13).show(ui, |ui| {
                     ui.spacing_mut().item_spacing = vec2(11.0, 4.0);
                     let width = ui.available_width() - 11.0;
@@ -484,7 +512,7 @@ impl eframe::App for Watch {
                                 Layout::top_down(Align::Min),
                                 |ui| {
                                     ui.set_width(width);
-                                    panel().show(ui, |ui| {
+                                    panel(colors).show(ui, |ui| {
                                         let inner = vec2(width - 34.0, height - 34.0);
                                         ui.set_min_size(inner);
                                         ui.set_max_size(inner);
@@ -504,16 +532,24 @@ impl eframe::App for Watch {
     }
 }
 
-fn route_button(text: &str, primary: bool) -> Button<'_> {
-    Button::new(RichText::new(text).font(bold(14.0)))
-        .min_size(vec2(if primary { 97.0 } else { 85.0 }, 34.0))
-        .corner_radius(6)
-        .fill(if primary { CRIMSON } else { BAR })
-        .stroke(if primary {
-            Stroke::NONE
-        } else {
-            Stroke::new(1.0, BORDER)
-        })
+fn route_button(text: &str, primary: bool, colors: theme::Colors) -> Button<'_> {
+    Button::new(RichText::new(text).font(bold(14.0)).color(if primary {
+        colors.on_accent
+    } else {
+        colors.text
+    }))
+    .min_size(vec2(if primary { 97.0 } else { 85.0 }, 34.0))
+    .corner_radius(6)
+    .fill(if primary {
+        colors.accent
+    } else {
+        colors.surface
+    })
+    .stroke(if primary {
+        Stroke::NONE
+    } else {
+        Stroke::new(1.0, colors.border)
+    })
 }
 
 fn table_cells(rect: Rect) -> [Rect; 6] {
@@ -530,10 +566,15 @@ fn table_cells(rect: Rect) -> [Rect; 6] {
 }
 
 fn table_heading(ui: &mut Ui, width: f32) {
+    let colors = theme::colors(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, 37.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 5.0, BAR);
-    p.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BORDER));
+    p.rect_filled(rect, 5.0, colors.surface);
+    p.hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, colors.border),
+    );
     for (index, (cell, label)) in table_cells(rect)
         .into_iter()
         .zip(["Uygulama", "Uzak IP", "Port", "Durum", "İndirme", "Yükleme"])
@@ -541,15 +582,18 @@ fn table_heading(ui: &mut Ui, width: f32) {
     {
         let right = index >= 4;
         if right {
-            let width = p.layout_no_wrap(label.into(), bold(14.0), TEXT).size().x;
+            let width = p
+                .layout_no_wrap(label.into(), bold(14.0), colors.text)
+                .size()
+                .x;
             arrow(
                 p,
                 cell.right_center() - vec2(width + 11.0, 0.0),
                 index == 5,
-                MUTED,
+                colors.muted,
             );
         }
-        cell_text(p, cell, label, bold(14.0), TEXT, right);
+        cell_text(p, cell, label, bold(14.0), colors.text, right);
     }
 }
 
@@ -560,26 +604,39 @@ fn connection_row(
     selected: bool,
     icon: Option<egui::TextureId>,
 ) -> egui::Response {
+    let colors = theme::colors(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
     let response = ui.interact(rect, ui.make_persistent_id(c.key), Sense::click());
     let p = ui.painter();
     if selected || response.hovered() {
-        p.rect_filled(rect, 4.0, if selected { SELECTED } else { BAR });
+        p.rect_filled(
+            rect,
+            4.0,
+            if selected {
+                colors.selected
+            } else {
+                colors.surface
+            },
+        );
         if selected {
             p.rect_filled(
                 Rect::from_min_size(rect.left_top() + vec2(0.0, 3.0), vec2(3.0, ROW - 6.0)),
                 1.0,
-                ROSE,
+                colors.accent_text,
             );
         }
     }
-    p.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, LINE));
+    p.hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, colors.border),
+    );
 
     let state = monitor::state_label(c.state);
     let color = match state {
-        "Bağlı" => GREEN,
-        "Kuruluyor" => AMBER,
-        _ => MUTED,
+        "Bağlı" => colors.success,
+        "Kuruluyor" => colors.warning,
+        _ => colors.muted,
     };
     let rate = c.transfer.rate();
     let labels = [
@@ -606,14 +663,14 @@ fn connection_row(
                 p.rect(
                     fallback,
                     4.0,
-                    BAR,
-                    Stroke::new(1.0, BORDER),
+                    colors.surface,
+                    Stroke::new(1.0, colors.border),
                     StrokeKind::Inside,
                 );
                 p.hline(
                     fallback.x_range().shrink(4.0),
                     fallback.top() + 6.0,
-                    Stroke::new(1.0, MUTED),
+                    Stroke::new(1.0, colors.muted),
                 );
             }
             cell.min.x += 29.0;
@@ -627,9 +684,9 @@ fn connection_row(
             FontId::proportional(15.0)
         };
         let color = if i == 3 || (i >= 4 && rate.is_none()) {
-            MUTED
+            colors.muted
         } else {
-            TEXT
+            colors.text
         };
         cell_text(p, cell, &labels[i], font, color, i >= 4);
     }
@@ -646,36 +703,37 @@ fn connection_row(
 }
 
 fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Option<IpAddr> {
+    let colors = theme::colors(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, HOP), Sense::hover());
     let p = ui.painter();
     let center = rect.left_center() + vec2(18.0, 0.0);
     let missing = hop.reply.is_none();
     let color = if reached {
-        GREEN
+        colors.success
     } else if missing {
-        AMBER
+        colors.warning
     } else {
-        MUTED
+        colors.muted
     };
     if hop.number != 1 {
         p.line_segment(
             [pos2(center.x, rect.top()), center],
-            Stroke::new(2.0, BORDER),
+            Stroke::new(2.0, colors.border),
         );
     }
     if !last {
         p.line_segment(
             [center, pos2(center.x, rect.bottom())],
-            Stroke::new(2.0, BORDER),
+            Stroke::new(2.0, colors.border),
         );
     }
     p.circle(
         center,
         13.0,
         if reached {
-            Color32::from_rgb(24, 63, 48)
+            theme::mix(colors.surface, colors.success, 18)
         } else {
-            BAR
+            colors.surface
         },
         Stroke::new(1.5, color),
     );
@@ -684,12 +742,12 @@ fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Opt
         Align2::CENTER_CENTER,
         hop.number.to_string(),
         bold(13.0),
-        if missing { AMBER } else { TEXT },
+        if missing { colors.warning } else { colors.text },
     );
     p.hline(
         egui::Rangef::new(rect.left() + 42.0, rect.right()),
         rect.bottom(),
-        Stroke::new(1.0, LINE),
+        Stroke::new(1.0, colors.border),
     );
     let ip_rect = Rect::from_min_max(
         pos2(rect.left() + 45.0, rect.top()),
@@ -699,9 +757,12 @@ fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Opt
     let mut inspect = None;
     if let Some((ip, ms)) = hop.reply {
         let ip = ip.to_canonical();
-        let mut color = if reached { GREEN } else { TEXT };
+        let mut color = if reached { colors.success } else { colors.text };
         if is_public_candidate(ip) {
-            let ip_width = p.layout_no_wrap(ip.to_string(), bold(16.0), TEXT).size().x;
+            let ip_width = p
+                .layout_no_wrap(ip.to_string(), bold(16.0), colors.text)
+                .size()
+                .x;
             let area = Rect::from_center_size(
                 ip_rect.left_center() + vec2(ip_width.min(ip_rect.width()) / 2.0, 0.0),
                 vec2(ip_width.min(ip_rect.width()), 28.0),
@@ -715,7 +776,7 @@ fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Opt
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text("IP’yi incele");
             if response.hovered() {
-                color = BLUE;
+                color = colors.secondary_text;
             }
             if response.clicked() {
                 inspect = Some(ip);
@@ -727,7 +788,7 @@ fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Opt
             time_rect,
             &rtt(ms),
             FontId::proportional(15.0),
-            TEXT,
+            colors.text,
             true,
         );
     } else {
@@ -736,15 +797,23 @@ fn hop_row(ui: &mut Ui, width: f32, hop: &Hop, last: bool, reached: bool) -> Opt
             ip_rect,
             "Yanıt yok",
             FontId::proportional(15.0),
-            AMBER,
+            colors.warning,
             false,
         );
-        cell_text(p, time_rect, "—", FontId::proportional(15.0), MUTED, true);
+        cell_text(
+            p,
+            time_rect,
+            "—",
+            FontId::proportional(15.0),
+            colors.muted,
+            true,
+        );
     }
     inspect
 }
 
 fn route_status(ui: &mut Ui, route: Option<&Trace>) {
+    let colors = theme::colors(ui.ctx());
     let (title, detail, color) = match route {
         Some(trace) => match trace.finish {
             Some(Finish::Reached) => {
@@ -752,33 +821,33 @@ fn route_status(ui: &mut Ui, route: Option<&Trace>) {
                     || address(trace.target),
                     |(ip, ms)| format!("{}  ·  {}", ip.to_canonical(), rtt(ms)),
                 );
-                ("Hedefe ulaşıldı".to_owned(), result, GREEN)
+                ("Hedefe ulaşıldı".to_owned(), result, colors.success)
             }
             Some(Finish::Limit) => (
                 "Hedef yanıt vermedi".to_owned(),
                 format!("{} adım ölçüldü", route::MAX_HOPS),
-                AMBER,
+                colors.warning,
             ),
             Some(Finish::Cancelled) => (
                 "Ölçüm durduruldu".to_owned(),
                 format!("{} adım ölçüldü", trace.hops.len()),
-                MUTED,
+                colors.muted,
             ),
             Some(Finish::Failed(code)) => (
                 "Ölçüm tamamlanamadı".to_owned(),
                 format!("Windows hata kodu {code}"),
-                AMBER,
+                colors.error,
             ),
             None => (
                 "Rota ölçülüyor…".to_owned(),
                 format!("{} adım ölçüldü", trace.hops.len()),
-                ROSE,
+                colors.accent_text,
             ),
         },
         None => (
             "Ölçüme hazır".to_owned(),
             "Yanıt veren hop’lar bu panelde görünür.".to_owned(),
-            MUTED,
+            colors.muted,
         ),
     };
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::hover());
@@ -786,8 +855,8 @@ fn route_status(ui: &mut Ui, route: Option<&Trace>) {
     p.rect(
         rect,
         7.0,
-        FIELD,
-        Stroke::new(1.0, BORDER),
+        colors.field,
+        Stroke::new(1.0, colors.border),
         StrokeKind::Inside,
     );
     p.circle_filled(rect.left_top() + vec2(16.0, 19.0), 4.0, color);
@@ -806,7 +875,7 @@ fn route_status(ui: &mut Ui, route: Option<&Trace>) {
         ),
         &detail,
         FontId::proportional(14.0),
-        MUTED,
+        colors.muted,
         false,
     );
 }
