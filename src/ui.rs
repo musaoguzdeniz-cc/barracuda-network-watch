@@ -491,16 +491,9 @@ impl eframe::App for Watch {
             .inner_margin(0)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                brand_bar(ui, self.snapshot.connections.len(), !self.waiting);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .menu_button("Görünüm", |ui| theme::picker(ui, THEME_APP, "Tema"))
-                        .inner
-                        == Some(true)
-                    {
-                        native::caption(frame, theme::colors(ui.ctx()));
-                    }
-                });
+                if header(ui, self.snapshot.connections.len(), !self.waiting) {
+                    native::caption(frame, theme::colors(ui.ctx()));
+                }
                 Frame::new().inner_margin(13).show(ui, |ui| {
                     ui.spacing_mut().item_spacing = vec2(11.0, 4.0);
                     let width = ui.available_width() - 11.0;
@@ -530,6 +523,20 @@ impl eframe::App for Watch {
             });
         self.intel_window(ui);
     }
+}
+
+fn header(ui: &mut Ui, connections: usize, ready: bool) -> bool {
+    brand_bar(ui, connections, ready);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 30.0),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.menu_button("Görünüm", |ui| theme::picker(ui, THEME_APP, "Tema"))
+                .inner
+                == Some(true)
+        },
+    )
+    .inner
 }
 
 fn route_button(text: &str, primary: bool, colors: theme::Colors) -> Button<'_> {
@@ -934,4 +941,29 @@ fn lookup(ip: IpAddr) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn header_leaves_the_body_visible_in_normal_and_maximized_windows() {
+        let ctx = egui::Context::default();
+        setup(&ctx);
+        for size in [vec2(990.0, 580.0), vec2(1920.0, 1120.0)] {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let before = ui.available_height();
+                header(ui, 35, true);
+                let used = before - ui.available_height();
+                assert!(used <= 100.0, "Header consumed {used} points at {size:?}");
+            });
+            output.textures_delta.clear();
+        }
+    }
 }
